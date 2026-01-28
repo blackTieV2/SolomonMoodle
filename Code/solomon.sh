@@ -243,7 +243,9 @@ echo "[+] ${COUNT} URL(s) extracted"
 # ---------------------------------------------------------------------
 run_downloader() {
   echo "[+] Starting download-pdfs.js..."
-  echo "[DEBUG] DOWNLOAD_ALL=${DOWNLOAD_ALL:-0}, DEBUG=${DEBUG:-0}"
+  if [[ "${DEBUG:-0}" == "1" ]]; then
+    echo "[DEBUG] DOWNLOAD_ALL=${DOWNLOAD_ALL:-0}, DEBUG=${DEBUG:-0}"
+  fi
 
   env DOWNLOAD_ALL="${DOWNLOAD_ALL:-0}" DEBUG="${DEBUG:-0}" node "${DOWNLOADER}"
 }
@@ -382,20 +384,24 @@ echo
 TS=$(date +"%Y-%m-%d_%H-%M-%S")
 SUMMARY_FILE="${SOLOMON_SUBDIR}/_download_manifest.${TS}.txt"
 
-# Rebuild manifest (basic info + file list)
-{
-  echo "Solomon Download Manifest"
-  echo "========================="
-  echo "Timestamp:       $(date '+%Y-%m-%d %H:%M:%S')"
-  echo "HTML Source:     $(basename "${HTML}")"
-  echo "Output Folder:   ${SOLOMON_SUBDIR}"
-  echo "Mode:            $([[ "${MODE_ALL}" -eq 1 ]] && echo 'ALL resources' || echo 'PDF-only')"
-  echo
-  echo "Downloaded Files:"
-  find "${SOLOMON_SUBDIR}" -type f | sed 's/^/  - /'
-} > "${SUMMARY_FILE}"
+if [[ "${LOG_MANIFEST:-0}" == "1" ]]; then
+  # Rebuild manifest (basic info + file list)
+  {
+    echo "Solomon Download Manifest"
+    echo "========================="
+    echo "Timestamp:       $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "HTML Source:     $(basename "${HTML}")"
+    echo "Output Folder:   ${SOLOMON_SUBDIR}"
+    echo "Mode:            $([[ "${MODE_ALL}" -eq 1 ]] && echo 'ALL resources' || echo 'PDF-only')"
+    echo
+    echo "Downloaded Files:"
+    find "${SOLOMON_SUBDIR}" -type f | sed 's/^/  - /'
+  } > "${SUMMARY_FILE}"
 
-echo "[✓] Manifest written to: ${SUMMARY_FILE}"
+  echo "[✓] Manifest written to: ${SUMMARY_FILE}"
+else
+  echo "[i] Manifest logging disabled"
+fi
 
 # Optional: Archive output
 if [[ "${MODE_ALL}" -eq 1 ]]; then
