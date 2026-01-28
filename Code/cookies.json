@@ -1,0 +1,34 @@
+[
+  {
+    "name": "MOODLEID1_",
+    "value": "sodium%3AqnPlCgjRnIPzNMyqjRoseJoo1IQ7l9uH4ua2qYf3XJWPlUszr%2BrSzuCjND0L2iIovuJ1",
+    "domain": "solomon.ugle.org.uk",
+    "path": "/",
+    "secure": true,
+    "httpOnly": true
+  },
+  {
+    "name": "AWSALBCORS",
+    "value": "yC55gUWrtIi4DSktYACquAIgIRtWRBQrvl0M6AZrPWpHXvM1zrfWDgID9PZ8Nqyvh3kMiaUnB/UHclL/SvHSlX2woJz0sE/fBc9rjrHsTt1xULHl2Q2f4+nX5jBq",
+    "domain": "solomon.ugle.org.uk",
+    "path": "/",
+    "secure": true,
+    "httpOnly": false
+  },
+  {
+    "name": "AWSALB",
+    "value": "yC55gUWrtIi4DSktYACquAIgIRtWRBQrvl0M6AZrPWpHXvM1zrfWDgID9PZ8Nqyvh3kMiaUnB/UHclL/SvHSlX2woJz0sE/fBc9rjrHsTt1xULHl2Q2f4+nX5jBq",
+    "domain": "solomon.ugle.org.uk",
+    "path": "/",
+    "secure": false,
+    "httpOnly": false
+  },
+  {
+    "name": "MoodleSession",
+    "value": "7nm2i1en9qijqrmcms07nnndmj",
+    "domain": "solomon.ugle.org.uk",
+    "path": "/",
+    "secure": true,
+    "httpOnly": true
+  }
+]
