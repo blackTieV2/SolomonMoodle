@@ -54,17 +54,40 @@ ALLOW_LARGE="${ALLOW_LARGE:-0}"
 # ---------------------------------------------------------------------
 die() { echo; echo "[✗] $1"; echo; exit 1; }
 pause() { read -rp "Press ENTER to continue..."; }
+banner() {
+  echo
+  echo "========================================="
+  echo " $1"
+  echo "========================================="
+}
 
 # ---------------------------------------------------------------------
-# Block 1: Manifest / Pre-flight display
+# Block 1: Environment checks (fail fast)
+# What: Verify required tools before any downloads
+# Why: Prevent long waits before discovering missing prerequisites
+# ---------------------------------------------------------------------
+banner "Environment Check"
+
+command -v node >/dev/null || die "Node.js is not installed.\n\n→ Install Node.js (v20+) from https://nodejs.org/\n→ Then re-run solomon.sh"
+command -v npm >/dev/null || die "npm is not installed.\n\n→ Install npm (bundled with Node.js)\n→ Then re-run solomon.sh"
+command -v file >/dev/null || die "file(1) is not installed.\n\n→ Install 'file' for MIME detection (e.g., apt install file / brew install file)\n→ Then re-run solomon.sh"
+
+NODE_MAJOR="$(node -p 'process.versions.node.split(\".\")[0]')"
+if [[ "${NODE_MAJOR}" -lt 20 ]]; then
+  die "Node.js v20+ is required (detected v${NODE_MAJOR}).\n\n→ Upgrade Node.js to v20 or newer\n→ Then re-run solomon.sh"
+fi
+
+if [[ ! -d "${PROJECT_ROOT}/node_modules" ]]; then
+  die "node_modules not found.\n\n→ Run: npm install\n→ Then re-run solomon.sh"
+fi
+
+# ---------------------------------------------------------------------
+# Block 2: Manifest / Pre-flight display
 # What: Show current project configuration + files detected
 # Why: Transparency and safety before destructive operations
 # ---------------------------------------------------------------------
-echo
-echo "========================================="
-echo " Solomon Downloader – Manifest"
-echo "========================================="
-echo
+banner "Solomon Downloader – Manifest"
+
 echo "[+] Project root: ${PROJECT_ROOT}"
 echo
 echo "[+] Detected files:"
@@ -88,37 +111,40 @@ echo "Output directory:"
 echo
 
 echo "Node:"
-command -v node >/dev/null && node -v || echo "  node NOT FOUND"
+node -v
 echo
 
 pause
 
 # ---------------------------------------------------------------------
-# Block 2: Validate required files exist
+# Block 3: Validate required files exist
 # Why: Stop early if anything critical is missing.
 # ---------------------------------------------------------------------
-[[ -f "${COOKIES}" ]]    || die "cookies.json not found in project root"
-[[ -f "${SANITIZER}" ]]  || die "sanitize-cookies.js missing in project root"
-[[ -f "${EXTRACTOR}" ]]  || die "extract-resources.sh missing in project root"
-[[ -f "${DOWNLOADER}" ]] || die "download-pdfs.js missing in project root"
+[[ -f "${COOKIES}" ]]    || die "cookies.json not found.\n\n→ Export cookies from your browser using Cookie-Editor\n→ Save as cookies.json in the project root\n→ Then re-run solomon.sh"
+[[ -f "${SANITIZER}" ]]  || die "sanitize-cookies.js missing.\n\n→ Restore sanitize-cookies.js in the project root\n→ Then re-run solomon.sh"
+[[ -f "${EXTRACTOR}" ]]  || die "extract-resources.sh missing.\n\n→ Restore extract-resources.sh in the project root\n→ Then re-run solomon.sh"
+[[ -f "${DOWNLOADER}" ]] || die "download-pdfs.js missing.\n\n→ Restore download-pdfs.js in the project root\n→ Then re-run solomon.sh"
 
 # Ensure output directory is present
 mkdir -p "${OUT_DIR}"
 
 # ---------------------------------------------------------------------
-# Block 3: Cookie sanitisation
+# Block 4: Cookie sanitisation
 # What: Convert Cookie-Editor export into Puppeteer-compatible format
 # Why: Prevents runtime crashes due to invalid fields like 'partitionKey'
 # ---------------------------------------------------------------------
+banner "Cookie Validation"
+
 echo "[+] Using cookies.json"
 echo "[+] Sanitising cookies..."
 node "${SANITIZER}"
 
 # ---------------------------------------------------------------------
-# Block 4: Choose course HTML file (semi-automatic)
+# Block 5: Choose course HTML file (semi-automatic)
 # What: Auto-select if one HTML file; prompt if multiple.
 # Why: Convenience + safety.
 # ---------------------------------------------------------------------
+banner "Course HTML Selection"
 shopt -s nullglob
 HTML_FILES=("${PROJECT_ROOT}"/*.html)
 shopt -u nullglob
@@ -142,10 +168,11 @@ fi
 echo "[+] Using HTML: $(basename "${HTML}")"
 
 # ---------------------------------------------------------------------
-# Block 5: Mode prompt (PDF-only vs ALL file types)
+# Block 6: Mode prompt (PDF-only vs ALL file types)
 # What: Ask user whether to extract just PDFs or all file types (packages, zips, etc.)
 # Why: PDF-only is faster; ALL captures full interactivity.
 # ---------------------------------------------------------------------
+banner "Download Mode"
 echo
 read -rp "Download non-PDF resources too (HTML/DOCX/ZIP/videos/packages)? [y/N] " dl_all
 if [[ "${dl_all}" =~ ^[Yy]$ ]]; then
@@ -159,7 +186,7 @@ else
 fi
 
 # ---------------------------------------------------------------------
-# Block 5a: Create working folder
+# Block 6a: Create working folder
 # Derive subfolder name from HTML file (strip extension, sanitize)
 # Why: Keeps extracted files grouped by course
 # ---------------------------------------------------------------------
@@ -174,10 +201,11 @@ mkdir -p "${SOLOMON_SUBDIR}"
 echo "[+] Output subdirectory: ${SOLOMON_SUBDIR}"
 
 # ---------------------------------------------------------------------
-# Block 5b: Prompt for Debug + Logging Options
+# Block 6b: Prompt for Debug + Logging Options
 # What: Ask whether to enable verbose debug output and what logging format to use
 # Why: Keeps CLI clean for normal users but allows advanced diagnostics when needed
 # ---------------------------------------------------------------------
+banner "Logging Options"
 
 # Prompt for debug mode
 echo
@@ -213,6 +241,7 @@ esac
 # What: Run extractor script to generate resource_urls.txt
 # Why: Converts course page into downloadable target list
 # ---------------------------------------------------------------------
+banner "Resource Extraction"
 echo "[+] Extracting URLs..."
 
 # Backup existing resource list (if any)
@@ -229,9 +258,9 @@ else
 fi
 
 # Verify extractor output
-[[ -f "${RESOURCE_FILE}" ]] || die "resource_urls.txt not created by extractor"
+[[ -f "${RESOURCE_FILE}" ]] || die "resource_urls.txt was not created.\n\n→ Ensure extract-resources.sh is present and executable\n→ Then re-run solomon.sh"
 COUNT="$(grep -cve '^\s*$' "${RESOURCE_FILE}")"
-[[ "${COUNT}" -gt 0 ]] || die "resource_urls.txt is empty"
+[[ "${COUNT}" -gt 0 ]] || die "resource_urls.txt is empty.\n\n→ Confirm the course HTML contains resource links\n→ Then re-run solomon.sh"
 
 echo "[+] ${COUNT} URL(s) extracted"
 
@@ -255,8 +284,9 @@ run_downloader() {
 # What: Run test with only the first few URLs before bulk download
 # Why: Prevent accidental mass downloads (e.g., login page as PDF)
 # ---------------------------------------------------------------------
-echo
-echo "[+] Running test (first 10 items)..."
+banner "Safety Test Run"
+echo "[i] Safety test: downloading first 10 resources only (intentional and safe)"
+echo "[+] Running test (first 10 items)... this may take a few minutes."
 
 cp "${RESOURCE_FILE}" "${PROJECT_ROOT}/resource_urls.full.txt"
 head -n 10 "${PROJECT_ROOT}/resource_urls.full.txt" > "${RESOURCE_FILE}"
@@ -266,40 +296,42 @@ run_downloader
 # Validation: check for at least 1 file produced
 if [[ "${MODE_ALL}" -eq 1 ]]; then
   TEST_ANY="$(find "${OUT_DIR}" -type f | head -n 1 || true)"
-  [[ -z "${TEST_ANY}" ]] && die "No file produced during test run (ALL mode)"
+  [[ -z "${TEST_ANY}" ]] && die "No file produced during test run (ALL mode).\n\n→ Check your cookies and access rights\n→ Then re-run solomon.sh"
   echo "[✓] Test validated (ALL mode): $(basename "${TEST_ANY}")"
 else
   TEST_PDF="$(find "${OUT_DIR}" -type f -iname '*.pdf' | head -n 1 || true)"
-  [[ -z "${TEST_PDF}" ]] && die "No PDF produced during test run (PDF-only mode)"
+  [[ -z "${TEST_PDF}" ]] && die "No PDF produced during test run (PDF-only mode).\n\n→ Check your cookies and access rights\n→ Then re-run solomon.sh"
   FILE_TYPE="$(file -b "${TEST_PDF}" 2>/dev/null || echo '')"
-  [[ "${FILE_TYPE}" != *PDF* ]] && die "Test output is not a valid PDF (${FILE_TYPE})"
+  [[ "${FILE_TYPE}" != *PDF* ]] && die "Test output is not a valid PDF (${FILE_TYPE}).\n\n→ Verify the first resources are actual PDFs\n→ Then re-run solomon.sh"
   echo "[✓] Test validated (PDF-only): $(basename "${TEST_PDF}")"
 fi
+
+echo "[✓] Test run passed — proceeding to full download"
 
 # ---------------------------------------------------------------------
 # Block 9: Bulk download
 # What: Restore full list and download all resources
 # Why: Safe to proceed after test passes
 # ---------------------------------------------------------------------
-echo
+banner "Full Download"
+echo "[i] Bulk download started — this may take several minutes depending on course size."
 echo "[+] Running bulk download..."
 mv "${PROJECT_ROOT}/resource_urls.full.txt" "${RESOURCE_FILE}"
 
 run_downloader
 
 echo
-echo "[✓] Bulk download complete"
+echo "[✓] Download complete"
 echo "[✓] Output saved to: ${OUT_DIR}"
+echo "[i] Next: review files in ${OUT_DIR}"
 echo
 
 # ---------------------------------------------------------------------
-# Block 10: Mode summary (downloaded file types)
+# Block 10: Summary (downloaded file types)
 # What: Post-download audit of what was saved
 # Why: Helps verify correct content types and detect edge cases
 # ---------------------------------------------------------------------
-echo "========================================="
-echo " Mode Summary (downloaded file types)"
-echo "========================================="
+banner "Summary (downloaded file types)"
 
 if command -v file >/dev/null; then
   echo
