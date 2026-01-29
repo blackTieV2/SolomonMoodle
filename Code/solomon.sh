@@ -36,6 +36,7 @@ EXTRACTOR="${PROJECT_ROOT}/extract-resources.sh"
 DOWNLOADER="${PROJECT_ROOT}/download-pdfs.js"
 OUT_DIR="${PROJECT_ROOT}/Solomon"
 RESOURCE_FILE="${PROJECT_ROOT}/resource_urls.txt"
+BACKUP_DIR="${PROJECT_ROOT}/.backups"
 
 # ---------------------------------------------------------------------
 # Block 0.1: Optional override variables (tweak here or export externally)
@@ -80,6 +81,9 @@ fi
 if [[ ! -d "${PROJECT_ROOT}/node_modules" ]]; then
   die "node_modules not found.\n\n→ Run: npm install\n→ Then re-run solomon.sh"
 fi
+
+mkdir -p "${BACKUP_DIR}"
+echo "[i] Backups will be stored in: ${BACKUP_DIR}"
 
 # ---------------------------------------------------------------------
 # Block 2: Manifest / Pre-flight display
@@ -247,8 +251,8 @@ echo "[+] Extracting URLs..."
 # Backup existing resource list (if any)
 if [[ -f "${RESOURCE_FILE}" ]]; then
   TS=$(date +%Y%m%d-%H%M%S)
-  mv "${RESOURCE_FILE}" "${RESOURCE_FILE}.${TS}.bak"
-  echo "[i] Backed up existing resource_urls.txt -> resource_urls.txt.${TS}.bak"
+  mv "${RESOURCE_FILE}" "${BACKUP_DIR}/resource_urls.txt.${TS}.bak"
+  echo "[i] Backed up existing resource_urls.txt -> ${BACKUP_DIR}/resource_urls.txt.${TS}.bak"
 fi
 
 if [[ "${MODE_ALL}" -eq 1 ]]; then

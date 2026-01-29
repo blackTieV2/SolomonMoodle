@@ -13,6 +13,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 OUT_FILE="${PROJECT_ROOT}/resource_urls.txt"
 BASE="https://solomon.ugle.org.uk"
+BACKUP_DIR="${PROJECT_ROOT}/.backups"
 
 # ---------------------------------------------------------------------
 # Block 0.1: Helpers
@@ -78,8 +79,9 @@ fi
 # ---------------------------------------------------------------------
 if [[ -f "${OUT_FILE}" ]]; then
   TS="$(date +%Y%m%d-%H%M%S)"
-  cp -f "${OUT_FILE}" "${OUT_FILE}.${TS}.bak"
-  echo "[i] Backed up existing $(basename "${OUT_FILE}") -> $(basename "${OUT_FILE}").${TS}.bak"
+  mkdir -p "${BACKUP_DIR}"
+  cp -f "${OUT_FILE}" "${BACKUP_DIR}/resource_urls.txt.${TS}.bak"
+  echo "[i] Backed up existing $(basename "${OUT_FILE}") -> ${BACKUP_DIR}/resource_urls.txt.${TS}.bak"
 fi
 
 # ---------------------------------------------------------------------
