@@ -447,7 +447,7 @@ async function mirrorHtmlPackage(browser, page, rid, entryUrl, entryBuf) {
       return localPathForRef(packageRoot, rel);
     }
     if (url.startsWith(baseOrigin)) {
-      const rel = url.slice(baseOrigin.length).replace(/^\\//, '');
+      const rel = url.slice(baseOrigin.length).replace(/^\//, '');
       if (!rel) return null;
       return path.join(packageRoot, '_external', rel);
     }
