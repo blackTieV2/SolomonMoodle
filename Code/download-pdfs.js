@@ -371,7 +371,6 @@ function uniqueDir(dir) {
 
 async function mirrorHtmlPackage(browser, page, rid, entryUrl, entryBuf) {
   const baseDir = baseDirOf(entryUrl);
-  const baseOrigin = new URL(entryUrl).origin;
   const packageRoot = uniqueDir(path.join(OUTPUT_DIR, `${rid}-package`));
   ensureDir(packageRoot);
 
@@ -433,88 +432,29 @@ async function mirrorHtmlPackage(browser, page, rid, entryUrl, entryBuf) {
     }
   }
 
-  if (savedFiles.size >= MIRROR_MAX_FILES) {
-    logDebug(`Reached MIRROR_MAX_FILES limit (${MIRROR_MAX_FILES}) for ${rid}`);
-  }
-
-  let harvestedCount = 0;
-  const harvestLimit = Math.max(0, MIRROR_MAX_FILES - savedFiles.size);
-  const harvestedUrls = new Set();
-
-  const localPathForAsset = (url) => {
-    if (url.startsWith(baseDir)) {
-      const rel = url.slice(baseDir.length);
-      return localPathForRef(packageRoot, rel);
-    }
-    if (url.startsWith(baseOrigin)) {
-      const rel = url.slice(baseOrigin.length).replace(/^\\//, '');
-      if (!rel) return null;
-      return path.join(packageRoot, '_external', rel);
-    }
-    return null;
-  };
-
-  const attachHarvester = (harvestTarget) => {
-    harvestTarget.on('response', async (resp) => {
-      try {
-        if (harvestedCount >= harvestLimit) return;
-        const url = resp.url();
-        if (!url.startsWith(baseOrigin)) return;
-        if (harvestedUrls.has(url)) return;
-        harvestedUrls.add(url);
-
-        let buffer = null;
-        const status = resp.status();
-        const contentType = (resp.headers()['content-type'] || '').toLowerCase();
-
-        try {
-          buffer = await resp.buffer();
-        } catch (e) {
-          logDebug(`Harvest buffer error (${url}): ${e.message}`);
-        }
-
-        if (!buffer || status === 206) {
-          const full = await withRetries(() => fetchBinary(harvestTarget, url));
-          const bufferLength = buffer ? buffer.length : 0;
-          if (full && full.ok && full.data && full.data.length >= bufferLength) {
-            buffer = Buffer.from(full.data);
-          }
-        }
-
-        if (!buffer || !buffer.length) return;
-
-        const localPath = localPathForAsset(url);
-        if (!localPath) return;
-        ensureDir(path.dirname(localPath));
-        fs.writeFileSync(localPath, buffer);
-        harvestedCount += 1;
-        if (contentType.startsWith('audio/') || contentType.startsWith('video/')) {
-          logDebug(`Harvested media asset: ${url}`);
-        }
-      } catch (e) {
-        logDebug(`Harvest response error: ${e.message}`);
-      }
-    });
-
-    harvestTarget.on('popup', async (popup) => {
-      attachHarvester(popup);
-      try {
-        await popup.waitForLoadState?.('domcontentloaded');
-      } catch (e) {
-        logDebug(`Popup load wait failed: ${e.message}`);
-      }
-    });
-  };
-
   const harvestPage = await browser.newPage();
-  attachHarvester(harvestPage);
+  const harvestedUrls = new Set();
+  harvestPage.on('response', async (resp) => {
+    try {
+      const url = resp.url();
+      if (!url.startsWith(baseDir)) return;
+      if (harvestedUrls.has(url)) return;
+      harvestedUrls.add(url);
+
+      const buffer = await resp.buffer();
+      const rel = url.slice(baseDir.length);
+      const localPath = localPathForRef(packageRoot, rel);
+      if (!localPath) return;
+      ensureDir(path.dirname(localPath));
+      fs.writeFileSync(localPath, buffer);
+    } catch (e) {
+      logDebug(`Harvest response error: ${e.message}`);
+    }
+  });
 
   await withRetries(() => harvestPage.goto(entryUrl, { waitUntil: 'domcontentloaded' }));
   await sleep(HARVEST_SECONDS * 1000);
   await harvestPage.close();
-  if (harvestedCount >= harvestLimit) {
-    logDebug(`Harvest stopped at MIRROR_MAX_FILES limit (${MIRROR_MAX_FILES}) for ${rid}`);
-  }
 
   summary.savedPackages += 1;
   console.log(`📦 Mirrored HTML package: ${path.basename(packageRoot)}`);
