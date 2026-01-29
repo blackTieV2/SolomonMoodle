@@ -1,1 +1,7 @@
 .backups/
+node_modules/
+Solomon/
+cookies.json
+cookies.json.bak
+resource_urls.txt
+*.log
