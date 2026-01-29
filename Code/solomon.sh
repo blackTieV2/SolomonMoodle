@@ -78,9 +78,15 @@ if [[ "${NODE_MAJOR}" -lt 20 ]]; then
   die "Node.js v20+ is required (detected v${NODE_MAJOR}).\n\n→ Upgrade Node.js to v20 or newer\n→ Then re-run solomon.sh"
 fi
 
-if [[ ! -d "${PROJECT_ROOT}/node_modules" ]]; then
-  die "node_modules not found.\n\n→ Run: npm install\n→ Then re-run solomon.sh"
+NODE_MODULES_DIR="${PROJECT_ROOT}/node_modules"
+if [[ ! -d "${NODE_MODULES_DIR}" ]]; then
+  if [[ -f "${PROJECT_ROOT}/package.json" ]]; then
+    die "node_modules not found in:\n${NODE_MODULES_DIR}\n\n→ Run:\n    cd ${PROJECT_ROOT}\n    npm install\n→ Then re-run solomon.sh"
+  fi
+  die "node_modules not found in:\n${NODE_MODULES_DIR}\n\n→ Run:\n    cd ${PROJECT_ROOT}\n    npm install puppeteer\n→ Then re-run solomon.sh"
 fi
+
+node -e "require('puppeteer')" >/dev/null 2>&1 || die "Puppeteer is not installed or cannot be loaded.\n\n→ Run:\n    cd ${PROJECT_ROOT}\n    npm install puppeteer\n→ Then re-run solomon.sh"
 
 mkdir -p "${BACKUP_DIR}"
 echo "[i] Backups will be stored in: ${BACKUP_DIR}"
