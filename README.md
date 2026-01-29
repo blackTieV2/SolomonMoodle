@@ -6,10 +6,10 @@ SolomonMoodle is a **local, offline mirroring toolchain** for archiving Moodle c
 
 It automates downloading **all accessible learning materials** from a Moodle instance, including:
 
-* 📄 PDFs
-* 🔊 Audio files
-* 📦 ZIP packages
-* 🌐 **Interactive HTML packages** that open via popup windows (`mod/resource`)
+* PDFs
+* Audio files
+* ZIP packages
+* **Interactive HTML packages** that open via popup windows (`mod/resource`)
 
 The tool is designed for **authorized, personal, and educational use**, producing a structured, auditable archive suitable for offline study or long-term reference.
 
