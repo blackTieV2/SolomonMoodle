@@ -337,17 +337,200 @@ function localPathForRef(pkgDir, ref) {
   return path.join(pkgDir, safe);
 }
 
+async function fetchBinary(page, url) {
+  return await page.evaluate(async (fileUrl, timeoutMs) => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const resp = await fetch(fileUrl, { credentials: 'include', redirect: 'follow', signal: ctrl.signal });
+      const ct = resp.headers.get('content-type') || '';
+      const status = resp.status;
+      if (!resp.ok) return { ok: false, status, ct, data: null };
+      const ab = await resp.arrayBuffer();
+      return { ok: true, status, ct, data: Array.from(new Uint8Array(ab)) };
+    } catch (e) {
+      return { ok: false, status: 0, ct: '', data: null, error: String(e) };
+    } finally {
+      clearTimeout(t);
+    }
+  }, url, 30000);
+}
+
+function ensureDir(dir) {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
+
+function uniqueDir(dir) {
+  if (!fs.existsSync(dir)) return dir;
+  for (let i = 1; i < 10000; i++) {
+    const candidate = `${dir}-${i}`;
+    if (!fs.existsSync(candidate)) return candidate;
+  }
+  return `${dir}-${Date.now()}`;
+}
+
+async function mirrorHtmlPackage(browser, page, rid, entryUrl, entryBuf) {
+  const baseDir = baseDirOf(entryUrl);
+  const baseOrigin = new URL(entryUrl).origin;
+  const packageRoot = uniqueDir(path.join(OUTPUT_DIR, `${rid}-package`));
+  ensureDir(packageRoot);
+
+  const indexPath = path.join(packageRoot, 'index.html');
+  fs.writeFileSync(indexPath, entryBuf);
+  logDebug(`Saved HTML package entry: ${indexPath}`);
+
+  const visitedUrls = new Set();
+  const savedFiles = new Set();
+  const queue = [];
+
+  const seedRefs = extractRefsFromText(entryBuf.toString('utf8'));
+  for (const ref of seedRefs) {
+    const normalized = normalizeRelPath(ref);
+    if (!normalized || shouldIgnoreRef(normalized)) continue;
+    queue.push({ ref: normalized, depth: 1 });
+  }
+
+  while (queue.length && savedFiles.size < MIRROR_MAX_FILES) {
+    const { ref, depth } = queue.shift();
+    if (depth > MIRROR_MAX_DEPTH) continue;
+
+    let absolute;
+    try {
+      absolute = new URL(ref, entryUrl).toString();
+    } catch {
+      continue;
+    }
+
+    if (!absolute.startsWith(baseDir)) {
+      logDebug(`Skipping external ref: ${absolute}`);
+      continue;
+    }
+
+    if (visitedUrls.has(absolute)) continue;
+    visitedUrls.add(absolute);
+
+    const localRef = absolute.slice(baseDir.length);
+    const localPath = localPathForRef(packageRoot, localRef);
+    if (!localPath) continue;
+    ensureDir(path.dirname(localPath));
+
+    const result = await withRetries(() => fetchBinary(page, absolute));
+    if (!result || !result.ok || !result.data) continue;
+
+    const dataBuf = Buffer.from(result.data);
+    fs.writeFileSync(localPath, dataBuf);
+    savedFiles.add(localPath);
+
+    const contentType = (result.ct || '').toLowerCase();
+    const isText = contentType.includes('text/') || contentType.includes('javascript') || contentType.includes('json');
+    if (isText && depth < MIRROR_MAX_DEPTH) {
+      const refs = extractRefsFromText(dataBuf.toString('utf8'));
+      for (const child of refs) {
+        const normalized = normalizeRelPath(child);
+        if (!normalized || shouldIgnoreRef(normalized)) continue;
+        queue.push({ ref: normalized, depth: depth + 1 });
+      }
+    }
+  }
+
+  if (savedFiles.size >= MIRROR_MAX_FILES) {
+    logDebug(`Reached MIRROR_MAX_FILES limit (${MIRROR_MAX_FILES}) for ${rid}`);
+  }
+
+  let harvestedCount = 0;
+  const harvestLimit = Math.max(0, MIRROR_MAX_FILES - savedFiles.size);
+  const harvestedUrls = new Set();
+
+  const localPathForAsset = (url) => {
+    if (url.startsWith(baseDir)) {
+      const rel = url.slice(baseDir.length);
+      return localPathForRef(packageRoot, rel);
+    }
+    if (url.startsWith(baseOrigin)) {
+      const rel = url.slice(baseOrigin.length).replace(/^\//, '');
+      if (!rel) return null;
+      return path.join(packageRoot, '_external', rel);
+    }
+    return null;
+  };
+
+  const attachHarvester = (harvestTarget) => {
+    harvestTarget.on('response', async (resp) => {
+      try {
+        if (harvestedCount >= harvestLimit) return;
+        const url = resp.url();
+        if (!url.startsWith(baseOrigin)) return;
+        if (harvestedUrls.has(url)) return;
+        harvestedUrls.add(url);
+
+        let buffer = null;
+        const status = resp.status();
+        const contentType = (resp.headers()['content-type'] || '').toLowerCase();
+
+        try {
+          buffer = await resp.buffer();
+        } catch (e) {
+          logDebug(`Harvest buffer error (${url}): ${e.message}`);
+        }
+
+        if (!buffer || status === 206) {
+          const full = await withRetries(() => fetchBinary(harvestTarget, url));
+          const bufferLength = buffer ? buffer.length : 0;
+          if (full && full.ok && full.data && full.data.length >= bufferLength) {
+            buffer = Buffer.from(full.data);
+          }
+        }
+
+        if (!buffer || !buffer.length) return;
+
+        const localPath = localPathForAsset(url);
+        if (!localPath) return;
+        ensureDir(path.dirname(localPath));
+        fs.writeFileSync(localPath, buffer);
+        harvestedCount += 1;
+        if (contentType.startsWith('audio/') || contentType.startsWith('video/')) {
+          logDebug(`Harvested media asset: ${url}`);
+        }
+      } catch (e) {
+        logDebug(`Harvest response error: ${e.message}`);
+      }
+    });
+
+    harvestTarget.on('popup', async (popup) => {
+      attachHarvester(popup);
+      try {
+        await popup.waitForLoadState?.('domcontentloaded');
+      } catch (e) {
+        logDebug(`Popup load wait failed: ${e.message}`);
+      }
+    });
+  };
+
+  const harvestPage = await browser.newPage();
+  attachHarvester(harvestPage);
+
+  await withRetries(() => harvestPage.goto(entryUrl, { waitUntil: 'domcontentloaded' }));
+  await sleep(HARVEST_SECONDS * 1000);
+  await harvestPage.close();
+  if (harvestedCount >= harvestLimit) {
+    logDebug(`Harvest stopped at MIRROR_MAX_FILES limit (${MIRROR_MAX_FILES}) for ${rid}`);
+  }
+
+  summary.savedPackages += 1;
+  console.log(`📦 Mirrored HTML package: ${path.basename(packageRoot)}`);
+}
+
 // ---------------------------------------------------------------------
 // Block 9: DOM extraction – extractCandidatesFromPage()
 // ---------------------------------------------------------------------
 async function extractCandidatesFromPage(page, resourceUrl) {
-  console.log(`[DEBUG] 🧪 Extracting candidates for: ${resourceUrl}`);
+  logDebug(`🧪 Extracting candidates for: ${resourceUrl}`);
 
   // ✅ Correct delay (not page.waitForTimeout!)
   await new Promise(r => setTimeout(r, 2000));  // wait 2s for lazy load
 
   const divExists = await page.$('div.resourceworkaround') !== null;
-  console.log(`[DEBUG] 🔍 resourceworkaround div exists: ${divExists}`);
+  logDebug(`🔍 resourceworkaround div exists: ${divExists}`);
 
   const candidates = await page.evaluate(() => {
     const out = [];
@@ -382,8 +565,8 @@ async function extractCandidatesFromPage(page, resourceUrl) {
     return Array.from(new Set(out));
   });
 
-  console.log(`[DEBUG] ✅ Found ${candidates.length} candidates:`);
-  for (const c of candidates) console.log(`    → ${c}`);
+  logDebug(`✅ Found ${candidates.length} candidates:`);
+  for (const c of candidates) logDebug(`    → ${c}`);
 
   return candidates;
 }
@@ -423,6 +606,13 @@ async function extractCandidatesFromPage(page, resourceUrl) {
         console.warn('❌ No downloadable link candidates found');
         const html = await page.content();
         fs.writeFileSync(path.join(OUTPUT_DIR, `${rid}-page.html`), html);
+        if (resourceUrl.includes('/mod/page/')) {
+          const mainHtml = await page.$eval('div[role="main"], #region-main', (el) => el.outerHTML).catch(() => '');
+          if (mainHtml) {
+            fs.writeFileSync(path.join(OUTPUT_DIR, `${rid}-page-main.html`), mainHtml);
+            logDebug(`Saved mod/page main HTML fallback for ${rid}`);
+          }
+        }
         summary.skipped += 1;
         continue;
       }
