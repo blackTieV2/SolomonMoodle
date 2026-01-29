@@ -73,7 +73,7 @@ command -v node >/dev/null || die "Node.js is not installed.\n\n→ Install Node
 command -v npm >/dev/null || die "npm is not installed.\n\n→ Install npm (bundled with Node.js)\n→ Then re-run solomon.sh"
 command -v file >/dev/null || die "file(1) is not installed.\n\n→ Install 'file' for MIME detection (e.g., apt install file / brew install file)\n→ Then re-run solomon.sh"
 
-NODE_MAJOR="$(node -p 'process.versions.node.split(\".\")[0]')"
+NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 if [[ "${NODE_MAJOR}" -lt 20 ]]; then
   die "Node.js v20+ is required (detected v${NODE_MAJOR}).\n\n→ Upgrade Node.js to v20 or newer\n→ Then re-run solomon.sh"
 fi
