@@ -15,7 +15,8 @@ const path = require('path');
 // Resolve project root (directory where this script lives)
 const PROJECT_ROOT = path.dirname(path.resolve(__filename));
 const COOKIE_PATH = path.join(PROJECT_ROOT, 'cookies.json');
-const BACKUP_PATH = path.join(PROJECT_ROOT, 'cookies.json.bak');
+const BACKUP_DIR = path.join(PROJECT_ROOT, '.backups');
+const BACKUP_PATH = path.join(BACKUP_DIR, 'cookies.json.bak');
 
 // Required fields only (everything else is discarded)
 const ALLOWED_FIELDS = new Set([
@@ -75,6 +76,9 @@ if (!cleaned.some(c => c.name === 'MoodleSession')) {
 }
 
 // --- Backup original ---
+if (!fs.existsSync(BACKUP_DIR)) {
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+}
 fs.copyFileSync(COOKIE_PATH, BACKUP_PATH);
 
 // --- Write sanitized version ---
@@ -84,4 +88,4 @@ fs.writeFileSync(
 );
 
 console.log('[✓] cookies.json sanitised successfully');
-console.log(`[i] Backup saved as ${path.basename(BACKUP_PATH)}`);
+console.log(`[i] Backup saved as ${BACKUP_PATH}`);
