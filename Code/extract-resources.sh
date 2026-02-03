@@ -12,8 +12,12 @@ set -euo pipefail
 # ---------------------------------------------------------------------
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 OUT_FILE="${PROJECT_ROOT}/resource_urls.txt"
-BASE="https://solomon.ugle.org.uk"
+BASE_URL="${BASE_URL:-https://solomon.ugle.org.uk}"
 BACKUP_DIR="${PROJECT_ROOT}/.backups"
+
+BASE_HOST="${BASE_URL#https://}"
+BASE_HOST="${BASE_HOST#http://}"
+BASE_HOST_ESCAPED="$(printf '%s' "${BASE_HOST}" | sed 's/[.[\^$*+?(){|]/\\&/g')"
 
 # ---------------------------------------------------------------------
 # Block 0.1: Helpers
@@ -45,7 +49,8 @@ Output:
 
 Notes:
   - Handles absolute, relative, and escaped URLs.
-  - Canonicalizes output to ${BASE}/mod/<type>/view.php?id=#### (deduped).
+  - Canonicalizes output to ${BASE_URL}/mod/<type>/view.php?id=#### (deduped).
+  - Override base with BASE_URL=https://your-moodle.example
 EOF
 }
 
@@ -113,9 +118,9 @@ trap cleanup EXIT
 # Important: we capture ONLY the "id=digits" part (ignore &redirect=1 etc)
 # by matching id=\d+ and stopping there.
 
-RESOURCE_ANY='(?:https:\\/\\/solomon\.ugle\.org\.uk\\/)?mod\\/resource\\/view\.php\\?id=\\d+|https:\/\/solomon\.ugle\.org\.uk\/mod\/resource\/view\.php\?id=\d+|\/mod\/resource\/view\.php\?id=\d+'
-PAGE_ANY='(?:https:\\/\\/solomon\.ugle\.org\.uk\\/)?mod\\/page\\/view\.php\\?id=\\d+|https:\/\/solomon\.ugle\.org\.uk\/mod\/page\/view\.php\?id=\d+|\/mod\/page\/view\.php\?id=\d+'
-URL_ANY='(?:https:\\/\\/solomon\.ugle\.org\.uk\\/)?mod\\/url\\/view\.php\\?id=\\d+|https:\/\/solomon\.ugle\.org\.uk\/mod\/url\/view\.php\?id=\d+|\/mod\/url\/view\.php\?id=\d+'
+RESOURCE_ANY="(?:https:\\/\\/${BASE_HOST_ESCAPED}\\/)?mod\\/resource\\/view\\.php\\?id=\\d+|https:\\/\\/${BASE_HOST_ESCAPED}\\/mod\\/resource\\/view\\.php\\?id=\\d+|\\/mod\\/resource\\/view\\.php\\?id=\\d+"
+PAGE_ANY="(?:https:\\/\\/${BASE_HOST_ESCAPED}\\/)?mod\\/page\\/view\\.php\\?id=\\d+|https:\\/\\/${BASE_HOST_ESCAPED}\\/mod\\/page\\/view\\.php\\?id=\\d+|\\/mod\\/page\\/view\\.php\\?id=\\d+"
+URL_ANY="(?:https:\\/\\/${BASE_HOST_ESCAPED}\\/)?mod\\/url\\/view\\.php\\?id=\\d+|https:\\/\\/${BASE_HOST_ESCAPED}\\/mod\\/url\\/view\\.php\\?id=\\d+|\\/mod\\/url\\/view\\.php\\?id=\\d+"
 
 if [[ "${MODE_ALL}" -eq 1 ]]; then
   echo "[i] Mode: --all (resource + page + url)"
@@ -134,9 +139,9 @@ fi
 # 6) sort unique
 grep -oP "${GREP_RE}" "${HTML_PATH}" \
   | sed 's#\\/#/#g' \
-  | sed 's#^https\?://solomon\.ugle\.org\.uk##' \
+  | sed "s#^https\\?://${BASE_HOST_ESCAPED}##" \
   | sed 's#^mod/#/mod/#' \
-  | sed "s#^#${BASE}#; s#${BASE}${BASE}#${BASE}#g" \
+  | sed "s#^#${BASE_URL}#; s#${BASE_URL}${BASE_URL}#${BASE_URL}#g" \
   | sort -u \
   > "${TMP_OUT}"
 

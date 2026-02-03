@@ -1,7 +1,12 @@
 .backups/
 node_modules/
 Solomon/
+UNSW/
 cookies.json
 cookies.json.bak
 resource_urls.txt
+resource_urls.full.txt
 *.log
+*.bak
+/Code/*.html
+/Code/*.htm

@@ -53,7 +53,7 @@ The tool is designed for **authorized, personal, and educational use**, producin
 
 ```bash
 git clone https://github.com/<your-username>/solomon-moodle.git
-cd solomon-moodle
+cd solomon-moodle/Code
 npm install
 ```
 
@@ -109,6 +109,52 @@ Downloaded content will appear in the `Solomon/` directory.
 
 ---
 
+## 🧭 Multi-site support
+
+This repo ships with a stable **Solomon** workflow and an UNSW-specific wrapper. Each wrapper keeps output isolated.
+
+* **Solomon:** `./solomon.sh` → `Solomon/`
+* **UNSW:** `./unsw.sh` → `UNSW/`
+
+---
+
+## 🇦🇺 UNSW Usage (moodle.telt.unsw.edu.au)
+
+### 1. Install dependencies
+
+```bash
+cd /path/to/SolomonMoodle/Code
+npm install
+```
+
+### 2. Export cookies (UNSW)
+
+1. Log into `https://moodle.telt.unsw.edu.au`
+2. Use **Cookie-Editor** (or similar) to export cookies as JSON
+3. Save as `cookies.json` in `Code/`
+
+### 3. Save the course page as HTML
+
+* Open the course page (e.g. `https://moodle.telt.unsw.edu.au/course/view.php?id=90386`)
+* Use **Save page as…** → **Webpage, HTML only**
+* Put the `.html` file into `Code/`
+
+### 4. Run the UNSW wrapper
+
+```bash
+./unsw.sh
+```
+
+The script will:
+
+* Print a manifest and environment checks
+* Sanitize cookies (with backups in `.backups/`)
+* Extract URLs from your saved HTML
+* Run a 10-item safety test
+* Download into `UNSW/<CourseName>/`
+
+---
+
 ## 📁 Output Structure
 
 ```text
@@ -143,6 +189,12 @@ You can control behavior using environment variables:
 | `MIRROR_MAX_FILES=2000` | Maximum mirrored assets per package        |
 | `MIRROR_MAX_DEPTH=8`    | Maximum recursive crawl depth              |
 | `ALLOW_LARGE=1`         | Remove the default per-file size cap       |
+
+You can also override extraction base URLs:
+
+| Variable   | Description                                |
+| ---------- | ------------------------------------------ |
+| `BASE_URL` | Moodle base URL for URL extraction scripts |
 
 Example:
 
@@ -190,4 +242,3 @@ Current release: **v1.0.0**
 See `CHANGELOG.md` for details.
 
 ---
-
