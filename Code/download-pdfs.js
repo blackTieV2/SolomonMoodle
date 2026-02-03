@@ -40,7 +40,7 @@ const path = require('path');
 // ---------------------------------------------------------------------
 const URL_FILE = 'resource_urls.txt';
 const COOKIE_FILE = 'cookies.json';
-const OUTPUT_DIR = process.env.SOLOMON_SUBDIR || 'Solomon';
+const OUTPUT_DIR = process.env.OUTPUT_DIR || process.env.SOLOMON_SUBDIR || 'Solomon';
 
 const DOWNLOAD_ALL = process.env.DOWNLOAD_ALL === '1';
 const MAX_RETRIES = Number(process.env.MAX_RETRIES || 3);
