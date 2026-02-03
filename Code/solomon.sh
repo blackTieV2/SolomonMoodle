@@ -34,9 +34,12 @@ COOKIES="${PROJECT_ROOT}/cookies.json"
 SANITIZER="${PROJECT_ROOT}/sanitize-cookies.js"
 EXTRACTOR="${PROJECT_ROOT}/extract-resources.sh"
 DOWNLOADER="${PROJECT_ROOT}/download-pdfs.js"
-OUT_DIR="${PROJECT_ROOT}/Solomon"
+OUTPUT_DIR_DEFAULT="Solomon"
+OUTPUT_DIR="${OUTPUT_DIR:-${OUTPUT_DIR_DEFAULT}}"
 RESOURCE_FILE="${PROJECT_ROOT}/resource_urls.txt"
 BACKUP_DIR="${PROJECT_ROOT}/.backups"
+BASE_URL_DEFAULT="https://solomon.ugle.org.uk"
+BASE_URL="${BASE_URL:-${BASE_URL_DEFAULT}}"
 
 # ---------------------------------------------------------------------
 # Block 0.1: Optional override variables (tweak here or export externally)
@@ -116,8 +119,13 @@ for f in sanitize-cookies.js extract-resources.sh download-pdfs.js; do
 done
 echo
 
+if [[ "${OUTPUT_DIR}" != /* ]]; then
+  OUTPUT_DIR="${PROJECT_ROOT}/${OUTPUT_DIR}"
+fi
+OUTPUT_ROOT="${OUTPUT_DIR}"
+
 echo "Output directory:"
-[[ -d "${OUT_DIR}" ]] && echo "  - Solomon/ (exists)" || echo "  - Solomon/ (will be created)"
+[[ -d "${OUTPUT_DIR}" ]] && echo "  - ${OUTPUT_DIR} (exists)" || echo "  - ${OUTPUT_DIR} (will be created)"
 echo
 
 echo "Node:"
@@ -136,7 +144,7 @@ pause
 [[ -f "${DOWNLOADER}" ]] || die "download-pdfs.js missing.\n\n→ Restore download-pdfs.js in the project root\n→ Then re-run solomon.sh"
 
 # Ensure output directory is present
-mkdir -p "${OUT_DIR}"
+mkdir -p "${OUTPUT_DIR}"
 
 # ---------------------------------------------------------------------
 # Block 4: Cookie sanitisation
@@ -204,11 +212,11 @@ HTML_BASENAME="$(basename "${HTML}" .html)"
 HTML_BASENAME="${HTML_BASENAME// /}"                        # Remove spaces
 HTML_BASENAME="${HTML_BASENAME//[^a-zA-Z0-9_]/_}"           # Sanitize to safe chars
 
-SOLOMON_SUBDIR="${OUT_DIR}/${HTML_BASENAME}"
-export SOLOMON_SUBDIR
-mkdir -p "${SOLOMON_SUBDIR}"
+OUTPUT_SUBDIR="${OUTPUT_ROOT}/${HTML_BASENAME}"
+export OUTPUT_DIR="${OUTPUT_SUBDIR}"
+mkdir -p "${OUTPUT_SUBDIR}"
 
-echo "[+] Output subdirectory: ${SOLOMON_SUBDIR}"
+echo "[+] Output subdirectory: ${OUTPUT_SUBDIR}"
 
 # ---------------------------------------------------------------------
 # Block 6b: Prompt for Debug + Logging Options
@@ -262,9 +270,9 @@ if [[ -f "${RESOURCE_FILE}" ]]; then
 fi
 
 if [[ "${MODE_ALL}" -eq 1 ]]; then
-  "${EXTRACTOR}" --all "${HTML}"
+  BASE_URL="${BASE_URL}" "${EXTRACTOR}" --all "${HTML}"
 else
-  "${EXTRACTOR}" "${HTML}"
+  BASE_URL="${BASE_URL}" "${EXTRACTOR}" "${HTML}"
 fi
 
 # Verify extractor output
@@ -286,7 +294,7 @@ run_downloader() {
     echo "[DEBUG] DOWNLOAD_ALL=${DOWNLOAD_ALL:-0}, DEBUG=${DEBUG:-0}"
   fi
 
-  env DOWNLOAD_ALL="${DOWNLOAD_ALL:-0}" DEBUG="${DEBUG:-0}" node "${DOWNLOADER}"
+  env OUTPUT_DIR="${OUTPUT_DIR}" DOWNLOAD_ALL="${DOWNLOAD_ALL:-0}" DEBUG="${DEBUG:-0}" node "${DOWNLOADER}"
 }
 
 # ---------------------------------------------------------------------
@@ -305,11 +313,11 @@ run_downloader
 
 # Validation: check for at least 1 file produced
 if [[ "${MODE_ALL}" -eq 1 ]]; then
-  TEST_ANY="$(find "${OUT_DIR}" -type f | head -n 1 || true)"
+  TEST_ANY="$(find "${OUTPUT_SUBDIR}" -type f | head -n 1 || true)"
   [[ -z "${TEST_ANY}" ]] && die "No file produced during test run (ALL mode).\n\n→ Check your cookies and access rights\n→ Then re-run solomon.sh"
   echo "[✓] Test validated (ALL mode): $(basename "${TEST_ANY}")"
 else
-  TEST_PDF="$(find "${OUT_DIR}" -type f -iname '*.pdf' | head -n 1 || true)"
+  TEST_PDF="$(find "${OUTPUT_SUBDIR}" -type f -iname '*.pdf' | head -n 1 || true)"
   [[ -z "${TEST_PDF}" ]] && die "No PDF produced during test run (PDF-only mode).\n\n→ Check your cookies and access rights\n→ Then re-run solomon.sh"
   FILE_TYPE="$(file -b "${TEST_PDF}" 2>/dev/null || echo '')"
   [[ "${FILE_TYPE}" != *PDF* ]] && die "Test output is not a valid PDF (${FILE_TYPE}).\n\n→ Verify the first resources are actual PDFs\n→ Then re-run solomon.sh"
@@ -332,8 +340,8 @@ run_downloader
 
 echo
 echo "[✓] Download complete"
-echo "[✓] Output saved to: ${OUT_DIR}"
-echo "[i] Next: review files in ${OUT_DIR}"
+echo "[✓] Output saved to: ${OUTPUT_SUBDIR}"
+echo "[i] Next: review files in ${OUTPUT_SUBDIR}"
 echo
 
 # ---------------------------------------------------------------------
@@ -346,14 +354,14 @@ banner "Summary (downloaded file types)"
 if command -v file >/dev/null; then
   echo
   echo "By MIME type:"
-  find "${OUT_DIR}" -type f -print0 \
+  find "${OUTPUT_SUBDIR}" -type f -print0 \
     | xargs -0 -I{} file -b --mime-type "{}" 2>/dev/null \
     | sort | uniq -c | sort -nr \
     | awk '{printf "  %5s  %s\n",$1,$2}'
 
   echo
   echo "By extension:"
-  find "${OUT_DIR}" -type f \
+  find "${OUTPUT_SUBDIR}" -type f \
     | sed -n 's/.*\.\([A-Za-z0-9]\{1,8\}\)$/\1/p' \
     | tr '[:upper:]' '[:lower:]' \
     | sort | uniq -c | sort -nr \
@@ -378,7 +386,7 @@ fi
 
 # Emit file logs
 if [[ -n "${LOG_JSON_FILE}" ]]; then
-  find "${OUT_DIR}" -type f | while read -r f; do
+  find "${OUTPUT_SUBDIR}" -type f | while read -r f; do
     sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
     mime=$(file -b --mime-type "$f" 2>/dev/null || echo "unknown")
     ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -393,7 +401,7 @@ fi
 
 echo
 echo "[✓] Completed successfully"
-echo "[✓] Output saved to: ${OUT_DIR}"
+echo "[✓] Output saved to: ${OUTPUT_SUBDIR}"
 [[ -n "${LOG_JSON_FILE}" ]] && echo "[✓] Log saved to: ${LOG_JSON_FILE}"
 echo
 
@@ -402,7 +410,7 @@ echo
 # ---------------------------------------------------------------------
 
 TS=$(date +"%Y-%m-%d_%H-%M-%S")
-SUMMARY_FILE="${SOLOMON_SUBDIR}/_download_manifest.${TS}.txt"
+SUMMARY_FILE="${OUTPUT_SUBDIR}/_download_manifest.${TS}.txt"
 
 if [[ "${LOG_MANIFEST:-0}" == "1" ]]; then
   # Rebuild manifest (basic info + file list)
@@ -411,11 +419,11 @@ if [[ "${LOG_MANIFEST:-0}" == "1" ]]; then
     echo "========================="
     echo "Timestamp:       $(date '+%Y-%m-%d %H:%M:%S')"
     echo "HTML Source:     $(basename "${HTML}")"
-    echo "Output Folder:   ${SOLOMON_SUBDIR}"
+    echo "Output Folder:   ${OUTPUT_SUBDIR}"
     echo "Mode:            $([[ "${MODE_ALL}" -eq 1 ]] && echo 'ALL resources' || echo 'PDF-only')"
     echo
     echo "Downloaded Files:"
-    find "${SOLOMON_SUBDIR}" -type f | sed 's/^/  - /'
+    find "${OUTPUT_SUBDIR}" -type f | sed 's/^/  - /'
   } > "${SUMMARY_FILE}"
 
   echo "[✓] Manifest written to: ${SUMMARY_FILE}"
@@ -425,9 +433,9 @@ fi
 
 # Optional: Archive output
 if [[ "${MODE_ALL}" -eq 1 ]]; then
-  ARCHIVE_PATH="${SOLOMON_SUBDIR}-${TS}.tar.gz"
+  ARCHIVE_PATH="${OUTPUT_SUBDIR}-${TS}.tar.gz"
   echo
   echo "[+] Creating archive: $(basename "${ARCHIVE_PATH}")"
-  tar -czf "${ARCHIVE_PATH}" -C "${OUT_DIR}" "$(basename "${SOLOMON_SUBDIR}")"
+  tar -czf "${ARCHIVE_PATH}" -C "${OUTPUT_ROOT}" "$(basename "${OUTPUT_SUBDIR}")"
   echo "[✓] Archive created: ${ARCHIVE_PATH}"
 fi

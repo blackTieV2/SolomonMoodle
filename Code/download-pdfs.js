@@ -9,7 +9,7 @@
  * - Prefers ZIP packages when available (and verified)
  * - Downloads PDFs directly
  * - For interactive HTML "packages" (pluginfile .../mod_resource/content/<n>/index.html):
- *     - Saves index.html into Solomon/<RID>-package/
+ *     - Saves index.html into <output>/<RID>-package/
  *     - Static mirrors referenced assets (src/href/url())
  *     - Runtime harvests dynamically loaded assets by loading the page and capturing network
  * - Prints a summary at the end (counts by MIME + extension)
@@ -40,7 +40,7 @@ const path = require('path');
 // ---------------------------------------------------------------------
 const URL_FILE = 'resource_urls.txt';
 const COOKIE_FILE = 'cookies.json';
-const OUTPUT_DIR = process.env.OUTPUT_DIR || process.env.SOLOMON_SUBDIR || 'Solomon';
+const OUTPUT_DIR = process.env.OUTPUT_DIR || 'output';
 
 const DOWNLOAD_ALL = process.env.DOWNLOAD_ALL === '1';
 const MAX_RETRIES = Number(process.env.MAX_RETRIES || 3);
@@ -72,7 +72,6 @@ const urls = fs.readFileSync(URL_FILE, 'utf-8')
   .filter(Boolean);
 
 console.log(`[INFO] Saving files into: ${OUTPUT_DIR}`);
-logDebug(`SOLOMON_SUBDIR: ${process.env.SOLOMON_SUBDIR}`);
 logDebug(`OUTPUT_DIR: ${OUTPUT_DIR}`);
 logDebug(`MAX_RETRIES: ${MAX_RETRIES}`);
 logDebug(`DOWNLOAD_ALL: ${DOWNLOAD_ALL}`);

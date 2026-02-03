@@ -15,8 +15,10 @@ EXTRACTOR="${PROJECT_ROOT}/extract-resources.sh"
 DOWNLOADER="${PROJECT_ROOT}/download-pdfs.js"
 RESOURCE_FILE="${PROJECT_ROOT}/resource_urls.txt"
 BACKUP_DIR="${PROJECT_ROOT}/.backups"
-OUTPUT_BASE="${PROJECT_ROOT}/UNSW"
+OUTPUT_DIR_DEFAULT="UNSW"
+OUTPUT_DIR="${OUTPUT_DIR:-${OUTPUT_DIR_DEFAULT}}"
 BASE_URL_DEFAULT="https://moodle.telt.unsw.edu.au"
+BASE_URL="${BASE_URL:-${BASE_URL_DEFAULT}}"
 
 # ---------------------------------------------------------------------
 # Helpers
@@ -80,8 +82,12 @@ for f in sanitize-cookies.js extract-resources.sh download-pdfs.js; do
   [[ -f "${PROJECT_ROOT}/${f}" ]] && echo "  - ${f}" || echo "  - ${f} (MISSING)"
 done
 echo
+if [[ "${OUTPUT_DIR}" != /* ]]; then
+  OUTPUT_DIR="${PROJECT_ROOT}/${OUTPUT_DIR}"
+fi
+
 echo "Output directory:"
-[[ -d "${OUTPUT_BASE}" ]] && echo "  - UNSW/ (exists)" || echo "  - UNSW/ (will be created)"
+[[ -d "${OUTPUT_DIR}" ]] && echo "  - ${OUTPUT_DIR} (exists)" || echo "  - ${OUTPUT_DIR} (will be created)"
 echo
 
 pause
@@ -94,7 +100,7 @@ pause
 [[ -f "${EXTRACTOR}" ]]  || die "extract-resources.sh missing.\n\n→ Restore extract-resources.sh in the project root\n→ Then re-run unsw.sh"
 [[ -f "${DOWNLOADER}" ]] || die "download-pdfs.js missing.\n\n→ Restore download-pdfs.js in the project root\n→ Then re-run unsw.sh"
 
-mkdir -p "${OUTPUT_BASE}"
+mkdir -p "${OUTPUT_DIR}"
 
 # ---------------------------------------------------------------------
 # Block 4: Cookie sanitisation
@@ -158,7 +164,7 @@ HTML_BASENAME="$(basename "${HTML}" .html)"
 HTML_BASENAME="${HTML_BASENAME// /}"
 HTML_BASENAME="${HTML_BASENAME//[^a-zA-Z0-9_]/_}"
 
-UNSW_SUBDIR="${OUTPUT_BASE}/${HTML_BASENAME}"
+UNSW_SUBDIR="${OUTPUT_DIR}/${HTML_BASENAME}"
 mkdir -p "${UNSW_SUBDIR}"
 
 echo "[+] Output subdirectory: ${UNSW_SUBDIR}"
@@ -176,9 +182,9 @@ if [[ -f "${RESOURCE_FILE}" ]]; then
 fi
 
 if [[ "${MODE_ALL}" -eq 1 ]]; then
-  BASE_URL="${BASE_URL_DEFAULT}" "${EXTRACTOR}" --all "${HTML}"
+  BASE_URL="${BASE_URL}" "${EXTRACTOR}" --all "${HTML}"
 else
-  BASE_URL="${BASE_URL_DEFAULT}" "${EXTRACTOR}" "${HTML}"
+  BASE_URL="${BASE_URL}" "${EXTRACTOR}" "${HTML}"
 fi
 
 [[ -f "${RESOURCE_FILE}" ]] || die "resource_urls.txt was not created.\n\n→ Ensure extract-resources.sh is present and executable\n→ Then re-run unsw.sh"

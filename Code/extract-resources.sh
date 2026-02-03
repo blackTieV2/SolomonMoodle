@@ -12,7 +12,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 OUT_FILE="${PROJECT_ROOT}/resource_urls.txt"
-BASE_URL="${BASE_URL:-https://solomon.ugle.org.uk}"
+: "${BASE_URL:?BASE_URL must be set by the launcher script}"
 BACKUP_DIR="${PROJECT_ROOT}/.backups"
 
 BASE_HOST="${BASE_URL#https://}"

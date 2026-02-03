@@ -87,7 +87,7 @@ node sanitize-cookies.js
 ### 4. Extract resource URLs
 
 ```bash
-./extract-resources.sh course.html
+BASE_URL="https://solomon.ugle.org.uk" ./extract-resources.sh course.html
 ```
 
 This creates a `resource_urls.txt` file containing all detected Moodle activity links.
@@ -182,6 +182,7 @@ You can control behavior using environment variables:
 
 | Variable                | Description                                |
 | ----------------------- | ------------------------------------------ |
+| `OUTPUT_DIR`            | Output directory for the downloader        |
 | `DOWNLOAD_ALL=1`        | Download all file types (not just PDFs)    |
 | `DEBUG=1`               | Enable verbose debug output                |
 | `MAX_RETRIES=3`         | Retry count for unstable requests          |
@@ -194,7 +195,7 @@ You can also override extraction base URLs:
 
 | Variable   | Description                                |
 | ---------- | ------------------------------------------ |
-| `BASE_URL` | Moodle base URL for URL extraction scripts |
+| `BASE_URL` | Moodle base URL for URL extraction scripts (required) |
 
 Example:
 
