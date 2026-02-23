@@ -54,6 +54,11 @@ const MIRROR_MAX_DEPTH = Number(process.env.MIRROR_MAX_DEPTH || 8);
 const HARVEST_SECONDS = Number(process.env.HARVEST_SECONDS || 12);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/g;
+
+function stripControlChars(value) {
+  return String(value || '').replace(CONTROL_CHARS_RE, '').trim();
+}
 
 function logDebug(msg, ...args) {
   if (DEBUG) console.log(`[DEBUG] ${msg}`, ...args);
@@ -68,7 +73,7 @@ if (!fs.existsSync(URL_FILE)) {
 
 const urls = fs.readFileSync(URL_FILE, 'utf-8')
   .split('\n')
-  .map((l) => l.trim())
+  .map((l) => stripControlChars(l))
   .filter(Boolean);
 
 console.log(`[INFO] Saving files into: ${OUTPUT_DIR}`);
@@ -125,7 +130,7 @@ function uniquePath(dir, filename) {
 
 function getResourceId(resourceUrl) {
   try {
-    const u = new URL(resourceUrl);
+    const u = new URL(stripControlChars(resourceUrl));
     return (u.searchParams.get('id') || 'unknown').trim();
   } catch {
     return 'unknown';
@@ -204,25 +209,38 @@ function extFromContentType(ct) {
 // Why: Moodle pages may offer multiple links; choose best one.
 //       Prefer ZIP when real ZIP; otherwise PDF; otherwise index.html package.
 // ---------------------------------------------------------------------
-function scoreCandidate(urlStr) {
-  const u = String(urlStr || '').toLowerCase();
+function scoreCandidate(urlStr, resourceUrl) {
+  const u = stripControlChars(urlStr).toLowerCase();
+  const source = stripControlChars(resourceUrl).toLowerCase();
   const isZip = u.includes('.zip');
   const isPdf = u.includes('.pdf');
+  const isVideo = /\.(mp4|m4v|mov|webm|m3u8)(?:$|[?#])/.test(u) || u.includes('/stream.aspx');
   const isIndex = u.endsWith('/index.html') || u.includes('/index.html?');
   const isPluginfile = u.includes('/pluginfile.php/');
   const isForced = u.includes('forcedownload');
+  const isSearchPage = u.includes('/course/search.php');
+  const isActivityView = /\/mod\/(resource|page|url)\/view\.php\?id=\d+/.test(u);
+  const isSharepoint = u.includes('sharepoint.com') || u.includes('/stream.aspx');
+  const fromUrlModule = source.includes('/mod/url/view.php?id=');
+
+  if (isSearchPage) return 0;
+  if (isVideo) return 980 + (isSharepoint ? 10 : 0);
 
   if (isZip) return 1000 + (isPluginfile ? 10 : 0);
   if (isPdf) return 900 + (isPluginfile ? 10 : 0) + (isForced ? 5 : 0);
   if (isIndex) return 850 + (isPluginfile ? 10 : 0);
   if (isPluginfile) return 700 + (isForced ? 10 : 0);
+  if (fromUrlModule && (isSharepoint || !isActivityView)) return 680;
+  if (isActivityView) return 120;
   return 200;
 }
 
-function rankCandidates(candidates) {
-  const deduped = Array.from(new Set((candidates || []).filter(Boolean)));
-  const filtered = DOWNLOAD_ALL ? deduped : deduped.filter((h) => h.toLowerCase().includes('.pdf'));
-  const scored = filtered.map((h) => ({ href: h, score: scoreCandidate(h) }));
+function rankCandidates(candidates, resourceUrl) {
+  const deduped = Array.from(new Set((candidates || []).map((c) => stripControlChars(c)).filter(Boolean)));
+  const filtered = DOWNLOAD_ALL
+    ? deduped.filter((h) => !h.toLowerCase().includes('/course/search.php'))
+    : deduped.filter((h) => h.toLowerCase().includes('.pdf'));
+  const scored = filtered.map((h) => ({ href: h, score: scoreCandidate(h, resourceUrl) }));
   const sorted = scored.sort((a, b) => b.score - a.score);
   logDebug(`Ranked ${sorted.length} candidates`);
   return sorted;
@@ -530,7 +548,7 @@ async function extractCandidatesFromPage(page, resourceUrl, navResponse) {
   const candidates = new Set();
   const pushCandidate = (value, source) => {
     if (!value) return;
-    const raw = String(value).trim();
+    const raw = stripControlChars(value);
     if (!raw) return;
     try {
       const normalized = new URL(raw, resourceUrl).toString();
@@ -678,7 +696,7 @@ async function extractCandidatesFromPage(page, resourceUrl, navResponse) {
         continue;
       }
 
-      const ranked = rankCandidates(candidates);
+      const ranked = rankCandidates(candidates, resourceUrl);
       if (!ranked.length) {
         console.warn(DOWNLOAD_ALL ? '❌ No suitable link candidates found' : '⏭️ Skipping (no PDF candidates found)');
         summary.skipped += 1;
@@ -688,6 +706,7 @@ async function extractCandidatesFromPage(page, resourceUrl, navResponse) {
       let chosen = null;
 
       for (const { href } of ranked) {
+        if (!href || /\/course\/search\.php/i.test(href)) continue;
         const pf = await withRetries(() => preflight(page, href));
         if (!pf || !pf.ok) continue;
 
@@ -773,7 +792,7 @@ async function extractCandidatesFromPage(page, resourceUrl, navResponse) {
       // Save optional metadata file
       const meta = {
         id: rid,
-        url: resourceUrl,
+        url: stripControlChars(resourceUrl),
         downloadedFrom: chosen,
         contentType: full.ct || '',
         contentLength: full.cl || '',
