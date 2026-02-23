@@ -97,7 +97,7 @@ This creates a `resource_urls.txt` file containing all detected Moodle activity 
 ### 5. Run the downloader
 
 ```bash
-./solomon.sh
+./moodle.sh --site solomon
 ```
 
 You will be prompted to choose:
@@ -111,7 +111,7 @@ Downloaded content will appear in the `Solomon/` directory.
 
 ## 🧭 Multi-site support
 
-This repo ships with a stable **Solomon** workflow and an UNSW-specific wrapper. Each wrapper keeps output isolated.
+This repo ships with a stable **Solomon** workflow and an UNSW-specific wrapper. Each wrapper keeps output isolated, and both map to a shared `moodle.sh` runner.
 
 * **Solomon:** `./solomon.sh` → `Solomon/`
 * **UNSW:** `./unsw.sh` → `UNSW/`
@@ -202,6 +202,55 @@ Example:
 ```bash
 DOWNLOAD_ALL=1 DEBUG=1 ./solomon.sh
 ```
+
+---
+
+## 🧭 Site profiles (`sites/`)
+
+Site profiles live in `sites/` and are loaded by `moodle.sh`. Each profile is a simple `.env` file that sets the base URL and output directory defaults.
+
+Example:
+
+```bash
+SITE_NAME="Solomon"
+BASE_URL="https://solomon.ugle.org.uk"
+OUTPUT_DIR_DEFAULT="Solomon"
+```
+
+Run with:
+
+```bash
+./moodle.sh --site solomon
+```
+
+---
+
+## 🤖 Non-interactive CI mode
+
+Use `--ci` (or `CI=1`) to disable prompts and enforce deterministic defaults. In CI mode you should explicitly provide the HTML file if more than one is present.
+
+```bash
+CI=1 ./moodle.sh --site solomon --html course.html --all
+```
+
+---
+
+## 🔌 Module plugin system
+
+To add support for new Moodle module types, create a plugin in `Code/plugins/modules/`. Plugins register new module patterns for `extract-resources.sh`.
+
+1. Copy the sample plugin:
+
+   ```bash
+   cp Code/plugins/modules/example-module.sh.sample Code/plugins/modules/mod-assign.sh
+   ```
+
+2. Edit the module name and pattern.
+3. Run the extractor with `--all` or `--modules`:
+
+   ```bash
+   ./moodle.sh --site solomon --modules resource,assign
+   ```
 
 ---
 

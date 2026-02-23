@@ -522,19 +522,40 @@ async function mirrorHtmlPackage(browser, page, rid, entryUrl, entryBuf) {
 // ---------------------------------------------------------------------
 // Block 9: DOM extraction – extractCandidatesFromPage()
 // ---------------------------------------------------------------------
-async function extractCandidatesFromPage(page, resourceUrl) {
+async function extractCandidatesFromPage(page, resourceUrl, navResponse) {
   logDebug(`🧪 Extracting candidates for: ${resourceUrl}`);
 
-  // ✅ Correct delay (not page.waitForTimeout!)
-  await new Promise(r => setTimeout(r, 2000));  // wait 2s for lazy load
+  await new Promise(r => setTimeout(r, 2000));
 
-  const divExists = await page.$('div.resourceworkaround') !== null;
-  logDebug(`🔍 resourceworkaround div exists: ${divExists}`);
+  const candidates = new Set();
+  const pushCandidate = (value, source) => {
+    if (!value) return;
+    const raw = String(value).trim();
+    if (!raw) return;
+    try {
+      const normalized = new URL(raw, resourceUrl).toString();
+      candidates.add(normalized);
+      logDebug(`candidate[${source}]: ${normalized}`);
+    } catch {
+      // ignore invalid URL fragments
+    }
+  };
 
-  const candidates = await page.evaluate(() => {
+  // Navigation-level signals: redirects and direct file responses.
+  if (navResponse) {
+    pushCandidate(navResponse.url(), 'nav-response-url');
+    const navHeaders = navResponse.headers ? navResponse.headers() : {};
+    const navCt = String(navHeaders['content-type'] || '').toLowerCase();
+    if (navCt && !navCt.includes('text/html')) {
+      pushCandidate(navResponse.url(), 'nav-non-html-content-type');
+    }
+  }
+
+  pushCandidate(page.url(), 'page-url');
+
+  const domCandidates = await page.evaluate(() => {
     const out = [];
-
-    const push = (u) => { if (u) out.push(u); };
+    const push = (u) => { if (u) out.push(String(u)); };
 
     const parseWindowOpen = (onclick) => {
       if (!onclick) return null;
@@ -549,27 +570,68 @@ async function extractCandidatesFromPage(page, resourceUrl) {
       return null;
     };
 
-    document.querySelectorAll('div.resourceworkaround a').forEach((a) => {
-      const href = a.getAttribute('href') || a.href;
-      if (href) push(href);
+    const parseRedirect = (text) => {
+      if (!text) return null;
+      const s = String(text);
+      let m = s.match(/location\.href\s*=\s*['"]([^'"]+)['"]/i);
+      if (m && m[1]) return m[1];
+      m = s.match(/location\.replace\(\s*['"]([^'"]+)['"]\s*\)/i);
+      if (m && m[1]) return m[1];
+      return null;
+    };
 
+    document.querySelectorAll('a[href]').forEach((a) => {
+      push(a.getAttribute('href') || a.href);
       const onclick = a.getAttribute('onclick');
       const w = parseWindowOpen(onclick);
       if (w) push(w);
+      const r = parseRedirect(onclick);
+      if (r) push(r);
     });
 
-    document.querySelectorAll('a[href*="pluginfile.php"]').forEach((a) => push(a.href));
-    document.querySelectorAll('a[href*="forcedownload"]').forEach((a) => push(a.href));
+    document.querySelectorAll('iframe[src], frame[src], embed[src], object[data], source[src]').forEach((el) => {
+      push(el.getAttribute('src') || el.getAttribute('data'));
+    });
 
-    return Array.from(new Set(out));
+    document.querySelectorAll('meta[http-equiv="refresh"][content]').forEach((m) => {
+      const content = m.getAttribute('content') || '';
+      const mm = content.match(/url=(.+)$/i);
+      if (mm && mm[1]) push(mm[1].trim());
+    });
+
+    document.querySelectorAll('script').forEach((sc) => {
+      const txt = sc.textContent || '';
+      const fromRedirect = parseRedirect(txt);
+      if (fromRedirect) push(fromRedirect);
+
+      const pf = txt.match(/https?:\/\/[^"'\s]+pluginfile\.php[^"'\s]*/gi) || [];
+      pf.forEach(push);
+    });
+
+    return out;
   });
 
-  logDebug(`✅ Found ${candidates.length} candidates:`);
-  for (const c of candidates) logDebug(`    → ${c}`);
+  for (const href of domCandidates) {
+    pushCandidate(href, 'dom');
+  }
 
-  return candidates;
+  // Keep Moodle activity links out of final candidates unless nothing else exists.
+  const finalCandidates = Array.from(candidates).filter((u) => {
+    const lower = u.toLowerCase();
+    const isActivityView = /\/mod\/(resource|page|url)\/view\.php\?id=\d+/.test(lower);
+    return !isActivityView;
+  });
+
+  if (finalCandidates.length) {
+    logDebug(`✅ Found ${finalCandidates.length} resolved candidates`);
+    return finalCandidates;
+  }
+
+  // Fallback: if no resolved file candidates, allow activity links (legacy behaviour).
+  const fallback = Array.from(candidates);
+  logDebug(`⚠️ Using fallback candidates (${fallback.length})`);
+  return fallback;
 }
-
 
 // ---------------------------------------------------------------------
 // Block 10: Main runner
@@ -598,9 +660,9 @@ async function extractCandidatesFromPage(page, resourceUrl) {
     const rid = getResourceId(resourceUrl);
 
     try {
-      await withRetries(() => page.goto(resourceUrl, { waitUntil: 'networkidle2' }));
+      const navResponse = await withRetries(() => page.goto(resourceUrl, { waitUntil: 'networkidle2' }));
 
-      const candidates = await extractCandidatesFromPage(page, resourceUrl);
+      const candidates = await extractCandidatesFromPage(page, resourceUrl, navResponse);
       if (!candidates.length) {
         console.warn('❌ No downloadable link candidates found');
         const html = await page.content();
