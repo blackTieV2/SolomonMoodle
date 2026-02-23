@@ -54,6 +54,11 @@ const MIRROR_MAX_DEPTH = Number(process.env.MIRROR_MAX_DEPTH || 8);
 const HARVEST_SECONDS = Number(process.env.HARVEST_SECONDS || 12);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/g;
+
+function stripControlChars(value) {
+  return String(value || '').replace(CONTROL_CHARS_RE, '').trim();
+}
 
 function logDebug(msg, ...args) {
   if (DEBUG) console.log(`[DEBUG] ${msg}`, ...args);
@@ -68,7 +73,7 @@ if (!fs.existsSync(URL_FILE)) {
 
 const urls = fs.readFileSync(URL_FILE, 'utf-8')
   .split('\n')
-  .map((l) => l.trim())
+  .map((l) => stripControlChars(l))
   .filter(Boolean);
 
 console.log(`[INFO] Saving files into: ${OUTPUT_DIR}`);
@@ -125,7 +130,7 @@ function uniquePath(dir, filename) {
 
 function getResourceId(resourceUrl) {
   try {
-    const u = new URL(resourceUrl);
+    const u = new URL(stripControlChars(resourceUrl));
     return (u.searchParams.get('id') || 'unknown').trim();
   } catch {
     return 'unknown';
@@ -204,25 +209,38 @@ function extFromContentType(ct) {
 // Why: Moodle pages may offer multiple links; choose best one.
 //       Prefer ZIP when real ZIP; otherwise PDF; otherwise index.html package.
 // ---------------------------------------------------------------------
-function scoreCandidate(urlStr) {
-  const u = String(urlStr || '').toLowerCase();
+function scoreCandidate(urlStr, resourceUrl) {
+  const u = stripControlChars(urlStr).toLowerCase();
+  const source = stripControlChars(resourceUrl).toLowerCase();
   const isZip = u.includes('.zip');
   const isPdf = u.includes('.pdf');
+  const isVideo = /\.(mp4|m4v|mov|webm|m3u8)(?:$|[?#])/.test(u) || u.includes('/stream.aspx');
   const isIndex = u.endsWith('/index.html') || u.includes('/index.html?');
   const isPluginfile = u.includes('/pluginfile.php/');
   const isForced = u.includes('forcedownload');
+  const isSearchPage = u.includes('/course/search.php');
+  const isActivityView = /\/mod\/(resource|page|url)\/view\.php\?id=\d+/.test(u);
+  const isSharepoint = u.includes('sharepoint.com') || u.includes('/stream.aspx');
+  const fromUrlModule = source.includes('/mod/url/view.php?id=');
+
+  if (isSearchPage) return 0;
+  if (isVideo) return 980 + (isSharepoint ? 10 : 0);
 
   if (isZip) return 1000 + (isPluginfile ? 10 : 0);
   if (isPdf) return 900 + (isPluginfile ? 10 : 0) + (isForced ? 5 : 0);
   if (isIndex) return 850 + (isPluginfile ? 10 : 0);
   if (isPluginfile) return 700 + (isForced ? 10 : 0);
+  if (fromUrlModule && (isSharepoint || !isActivityView)) return 680;
+  if (isActivityView) return 120;
   return 200;
 }
 
-function rankCandidates(candidates) {
-  const deduped = Array.from(new Set((candidates || []).filter(Boolean)));
-  const filtered = DOWNLOAD_ALL ? deduped : deduped.filter((h) => h.toLowerCase().includes('.pdf'));
-  const scored = filtered.map((h) => ({ href: h, score: scoreCandidate(h) }));
+function rankCandidates(candidates, resourceUrl) {
+  const deduped = Array.from(new Set((candidates || []).map((c) => stripControlChars(c)).filter(Boolean)));
+  const filtered = DOWNLOAD_ALL
+    ? deduped.filter((h) => !h.toLowerCase().includes('/course/search.php'))
+    : deduped.filter((h) => h.toLowerCase().includes('.pdf'));
+  const scored = filtered.map((h) => ({ href: h, score: scoreCandidate(h, resourceUrl) }));
   const sorted = scored.sort((a, b) => b.score - a.score);
   logDebug(`Ranked ${sorted.length} candidates`);
   return sorted;
@@ -522,19 +540,40 @@ async function mirrorHtmlPackage(browser, page, rid, entryUrl, entryBuf) {
 // ---------------------------------------------------------------------
 // Block 9: DOM extraction – extractCandidatesFromPage()
 // ---------------------------------------------------------------------
-async function extractCandidatesFromPage(page, resourceUrl) {
+async function extractCandidatesFromPage(page, resourceUrl, navResponse) {
   logDebug(`🧪 Extracting candidates for: ${resourceUrl}`);
 
-  // ✅ Correct delay (not page.waitForTimeout!)
-  await new Promise(r => setTimeout(r, 2000));  // wait 2s for lazy load
+  await new Promise(r => setTimeout(r, 2000));
 
-  const divExists = await page.$('div.resourceworkaround') !== null;
-  logDebug(`🔍 resourceworkaround div exists: ${divExists}`);
+  const candidates = new Set();
+  const pushCandidate = (value, source) => {
+    if (!value) return;
+    const raw = stripControlChars(value);
+    if (!raw) return;
+    try {
+      const normalized = new URL(raw, resourceUrl).toString();
+      candidates.add(normalized);
+      logDebug(`candidate[${source}]: ${normalized}`);
+    } catch {
+      // ignore invalid URL fragments
+    }
+  };
 
-  const candidates = await page.evaluate(() => {
+  // Navigation-level signals: redirects and direct file responses.
+  if (navResponse) {
+    pushCandidate(navResponse.url(), 'nav-response-url');
+    const navHeaders = navResponse.headers ? navResponse.headers() : {};
+    const navCt = String(navHeaders['content-type'] || '').toLowerCase();
+    if (navCt && !navCt.includes('text/html')) {
+      pushCandidate(navResponse.url(), 'nav-non-html-content-type');
+    }
+  }
+
+  pushCandidate(page.url(), 'page-url');
+
+  const domCandidates = await page.evaluate(() => {
     const out = [];
-
-    const push = (u) => { if (u) out.push(u); };
+    const push = (u) => { if (u) out.push(String(u)); };
 
     const parseWindowOpen = (onclick) => {
       if (!onclick) return null;
@@ -549,27 +588,68 @@ async function extractCandidatesFromPage(page, resourceUrl) {
       return null;
     };
 
-    document.querySelectorAll('div.resourceworkaround a').forEach((a) => {
-      const href = a.getAttribute('href') || a.href;
-      if (href) push(href);
+    const parseRedirect = (text) => {
+      if (!text) return null;
+      const s = String(text);
+      let m = s.match(/location\.href\s*=\s*['"]([^'"]+)['"]/i);
+      if (m && m[1]) return m[1];
+      m = s.match(/location\.replace\(\s*['"]([^'"]+)['"]\s*\)/i);
+      if (m && m[1]) return m[1];
+      return null;
+    };
 
+    document.querySelectorAll('a[href]').forEach((a) => {
+      push(a.getAttribute('href') || a.href);
       const onclick = a.getAttribute('onclick');
       const w = parseWindowOpen(onclick);
       if (w) push(w);
+      const r = parseRedirect(onclick);
+      if (r) push(r);
     });
 
-    document.querySelectorAll('a[href*="pluginfile.php"]').forEach((a) => push(a.href));
-    document.querySelectorAll('a[href*="forcedownload"]').forEach((a) => push(a.href));
+    document.querySelectorAll('iframe[src], frame[src], embed[src], object[data], source[src]').forEach((el) => {
+      push(el.getAttribute('src') || el.getAttribute('data'));
+    });
 
-    return Array.from(new Set(out));
+    document.querySelectorAll('meta[http-equiv="refresh"][content]').forEach((m) => {
+      const content = m.getAttribute('content') || '';
+      const mm = content.match(/url=(.+)$/i);
+      if (mm && mm[1]) push(mm[1].trim());
+    });
+
+    document.querySelectorAll('script').forEach((sc) => {
+      const txt = sc.textContent || '';
+      const fromRedirect = parseRedirect(txt);
+      if (fromRedirect) push(fromRedirect);
+
+      const pf = txt.match(/https?:\/\/[^"'\s]+pluginfile\.php[^"'\s]*/gi) || [];
+      pf.forEach(push);
+    });
+
+    return out;
   });
 
-  logDebug(`✅ Found ${candidates.length} candidates:`);
-  for (const c of candidates) logDebug(`    → ${c}`);
+  for (const href of domCandidates) {
+    pushCandidate(href, 'dom');
+  }
 
-  return candidates;
+  // Keep Moodle activity links out of final candidates unless nothing else exists.
+  const finalCandidates = Array.from(candidates).filter((u) => {
+    const lower = u.toLowerCase();
+    const isActivityView = /\/mod\/(resource|page|url)\/view\.php\?id=\d+/.test(lower);
+    return !isActivityView;
+  });
+
+  if (finalCandidates.length) {
+    logDebug(`✅ Found ${finalCandidates.length} resolved candidates`);
+    return finalCandidates;
+  }
+
+  // Fallback: if no resolved file candidates, allow activity links (legacy behaviour).
+  const fallback = Array.from(candidates);
+  logDebug(`⚠️ Using fallback candidates (${fallback.length})`);
+  return fallback;
 }
-
 
 // ---------------------------------------------------------------------
 // Block 10: Main runner
@@ -598,9 +678,9 @@ async function extractCandidatesFromPage(page, resourceUrl) {
     const rid = getResourceId(resourceUrl);
 
     try {
-      await withRetries(() => page.goto(resourceUrl, { waitUntil: 'networkidle2' }));
+      const navResponse = await withRetries(() => page.goto(resourceUrl, { waitUntil: 'networkidle2' }));
 
-      const candidates = await extractCandidatesFromPage(page, resourceUrl);
+      const candidates = await extractCandidatesFromPage(page, resourceUrl, navResponse);
       if (!candidates.length) {
         console.warn('❌ No downloadable link candidates found');
         const html = await page.content();
@@ -616,7 +696,7 @@ async function extractCandidatesFromPage(page, resourceUrl) {
         continue;
       }
 
-      const ranked = rankCandidates(candidates);
+      const ranked = rankCandidates(candidates, resourceUrl);
       if (!ranked.length) {
         console.warn(DOWNLOAD_ALL ? '❌ No suitable link candidates found' : '⏭️ Skipping (no PDF candidates found)');
         summary.skipped += 1;
@@ -626,6 +706,7 @@ async function extractCandidatesFromPage(page, resourceUrl) {
       let chosen = null;
 
       for (const { href } of ranked) {
+        if (!href || /\/course\/search\.php/i.test(href)) continue;
         const pf = await withRetries(() => preflight(page, href));
         if (!pf || !pf.ok) continue;
 
@@ -711,7 +792,7 @@ async function extractCandidatesFromPage(page, resourceUrl) {
       // Save optional metadata file
       const meta = {
         id: rid,
-        url: resourceUrl,
+        url: stripControlChars(resourceUrl),
         downloadedFrom: chosen,
         contentType: full.ct || '',
         contentLength: full.cl || '',
