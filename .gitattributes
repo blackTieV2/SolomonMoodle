@@ -1,0 +1,7 @@
+# Keep executable scripts POSIX-compatible on Linux/macOS.
+*.sh text eol=lf
+
+# Keep Node scripts and config/docs with LF to avoid accidental shebang breakage.
+*.js text eol=lf
+*.md text eol=lf
+*.env text eol=lf
