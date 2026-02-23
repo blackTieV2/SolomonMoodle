@@ -14,10 +14,48 @@ PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 OUT_FILE="${PROJECT_ROOT}/resource_urls.txt"
 : "${BASE_URL:?BASE_URL must be set by the launcher script}"
 BACKUP_DIR="${PROJECT_ROOT}/.backups"
+PLUGINS_DIR="${PROJECT_ROOT}/plugins/modules"
 
 BASE_HOST="${BASE_URL#https://}"
 BASE_HOST="${BASE_HOST#http://}"
 BASE_HOST_ESCAPED="$(printf '%s' "${BASE_HOST}" | sed 's/[.[\^$*+?(){|]/\\&/g')"
+
+# ---------------------------------------------------------------------
+# Block 0.2: Module registration + plugins
+# What: Allow new Moodle module types to be registered via plugins.
+# ---------------------------------------------------------------------
+declare -A MODULE_PATTERNS
+MODULE_NAMES=()
+DEFAULT_MODULES=()
+
+register_module() {
+  local name="$1"
+  local pattern="$2"
+  local include_default="${3:-0}"
+
+  if [[ -z "${name}" || -z "${pattern}" ]]; then
+    die "register_module requires a name and pattern."
+  fi
+
+  MODULE_PATTERNS["${name}"]="${pattern}"
+  MODULE_NAMES+=("${name}")
+  if [[ "${include_default}" == "1" ]]; then
+    DEFAULT_MODULES+=("${name}")
+  fi
+}
+
+# Built-in modules
+register_module "resource" "mod\\/resource\\/view\\.php\\?id=\\d+" 1
+register_module "page" "mod\\/page\\/view\\.php\\?id=\\d+" 0
+register_module "url" "mod\\/url\\/view\\.php\\?id=\\d+" 0
+
+if [[ -d "${PLUGINS_DIR}" ]]; then
+  for plugin in "${PLUGINS_DIR}"/*.sh; do
+    [[ -f "${plugin}" ]] || continue
+    # shellcheck source=/dev/null
+    source "${plugin}"
+  done
+fi
 
 # ---------------------------------------------------------------------
 # Block 0.1: Helpers
@@ -34,7 +72,7 @@ die() {
 usage() {
   cat <<EOF
 Usage:
-  $(basename "$0") [--all] /path/to/CoursePage.html
+  $(basename "$0") [--all] [--modules <list>] /path/to/CoursePage.html
 
 Modes:
   (default)  Extract only Moodle "resource" links:
@@ -43,6 +81,8 @@ Modes:
   --all      Also extract:
              /mod/page/view.php?id=####
              /mod/url/view.php?id=####
+
+  --modules  Comma-separated list of module names to extract.
 
 Output:
   ${OUT_FILE}
@@ -61,16 +101,41 @@ EOF
 # ---------------------------------------------------------------------
 MODE_ALL=0
 HTML_PATH=""
+MODULES=""
 
-if [[ "${1:-}" == "--all" ]]; then
-  MODE_ALL=1
-  shift
-fi
+while [[ $# -gt 0 ]]; do
+  case "${1:-}" in
+    --all)
+      MODE_ALL=1
+      shift
+      ;;
+    --modules)
+      MODULES="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      if [[ -z "${HTML_PATH}" ]]; then
+        HTML_PATH="${1}"
+        shift
+      else
+        usage
+        die "Unexpected argument: ${1}"
+      fi
+      ;;
+  esac
+done
 
-HTML_PATH="${1:-}"
 if [[ -z "${HTML_PATH}" ]]; then
   usage
   die "No HTML file provided."
+fi
+
+if [[ -n "${MODULES}" && "${MODE_ALL}" -eq 1 ]]; then
+  die "Use --modules or --all, not both."
 fi
 
 if [[ ! -f "${HTML_PATH}" ]]; then
@@ -118,17 +183,39 @@ trap cleanup EXIT
 # Important: we capture ONLY the "id=digits" part (ignore &redirect=1 etc)
 # by matching id=\d+ and stopping there.
 
-RESOURCE_ANY="(?:https:\\/\\/${BASE_HOST_ESCAPED}\\/)?mod\\/resource\\/view\\.php\\?id=\\d+|https:\\/\\/${BASE_HOST_ESCAPED}\\/mod\\/resource\\/view\\.php\\?id=\\d+|\\/mod\\/resource\\/view\\.php\\?id=\\d+"
-PAGE_ANY="(?:https:\\/\\/${BASE_HOST_ESCAPED}\\/)?mod\\/page\\/view\\.php\\?id=\\d+|https:\\/\\/${BASE_HOST_ESCAPED}\\/mod\\/page\\/view\\.php\\?id=\\d+|\\/mod\\/page\\/view\\.php\\?id=\\d+"
-URL_ANY="(?:https:\\/\\/${BASE_HOST_ESCAPED}\\/)?mod\\/url\\/view\\.php\\?id=\\d+|https:\\/\\/${BASE_HOST_ESCAPED}\\/mod\\/url\\/view\\.php\\?id=\\d+|\\/mod\\/url\\/view\\.php\\?id=\\d+"
+build_module_regex() {
+  local rel_pattern="$1"
+  printf '%s' "(?:https:\\/\\/${BASE_HOST_ESCAPED}\\/)?${rel_pattern}|https:\\/\\/${BASE_HOST_ESCAPED}\\/${rel_pattern}|\\/${rel_pattern}"
+}
 
-if [[ "${MODE_ALL}" -eq 1 ]]; then
-  echo "[i] Mode: --all (resource + page + url)"
-  GREP_RE="${RESOURCE_ANY}|${PAGE_ANY}|${URL_ANY}"
+SELECTED_MODULES=()
+if [[ -n "${MODULES}" ]]; then
+  IFS=',' read -r -a SELECTED_MODULES <<< "${MODULES}"
+  echo "[i] Mode: --modules (${MODULES})"
+elif [[ "${MODE_ALL}" -eq 1 ]]; then
+  SELECTED_MODULES=("${MODULE_NAMES[@]}")
+  echo "[i] Mode: --all (${#SELECTED_MODULES[@]} modules)"
 else
-  echo "[i] Mode: resource only"
-  GREP_RE="${RESOURCE_ANY}"
+  SELECTED_MODULES=("${DEFAULT_MODULES[@]}")
+  echo "[i] Mode: default (${DEFAULT_MODULES[*]})"
 fi
+
+if [[ "${#SELECTED_MODULES[@]}" -eq 0 ]]; then
+  die "No modules selected."
+fi
+
+GREP_RE=""
+for module in "${SELECTED_MODULES[@]}"; do
+  if [[ -z "${MODULE_PATTERNS[${module}]:-}" ]]; then
+    die "Unknown module: ${module}"
+  fi
+  module_regex="$(build_module_regex "${MODULE_PATTERNS[${module}]}")"
+  if [[ -z "${GREP_RE}" ]]; then
+    GREP_RE="${module_regex}"
+  else
+    GREP_RE="${GREP_RE}|${module_regex}"
+  fi
+done
 
 # Extraction pipeline:
 # 1) grep matches (may be escaped)
