@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Example Moodle module plugin.
+#
+# Copy to a new .sh file (e.g., mod-assign.sh) and update the values below.
+
+register_module \
+  "assign" \
+  "mod\\/assign\\/view\\.php\\?id=\\d+" \
+  0
